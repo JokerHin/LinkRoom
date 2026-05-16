@@ -1,5 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 /node_modules
 /.pnp
@@ -16,13 +14,13 @@
 # next.js
 /.next/
 /out/
+/linkroom_app/
 
 # production
 /build
 
 # misc
 .DS_Store
-*.pem
 
 # debug
 npm-debug.log*
@@ -30,7 +28,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
 
 # vercel
@@ -39,3 +37,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# GCP secrets - NEVER commit these
+linkroom-key.json
+*-key.json
+
+# GCP Worker - exclude node_modules and build output
+gcp-worker/node_modules/
+gcp-worker/dist/
+
+# Diagnostic scripts (local only)
+gcp-worker/test-ai-connection.js
+gcp-worker/list-models.js
+gcp-worker/list-supported-models.js
+gcp-worker/ping-worker.js
