@@ -34,34 +34,54 @@ cloudEvent('processIngestion', async (cloudEvent: any) => {
 
   console.log(`Processing payload for workspace: ${payload.workspace_id}`);
 
-  const HARDCODED_KEY = "AIzaSyAJ_i9d0TiltyV_JOgwmvNDSOxym7wdwVQ";
-  const apiKey = process.env.GEMINI_API_KEY || HARDCODED_KEY;
+  // API key read only from environment — never hardcoded
+  const apiKey = process.env.GEMINI_API_KEY || '';
 
   try {
     let embeddingVector: number[] = Array(768).fill(0);
     
-    // 1. Generate Embeddings via REST Pipeline (Gemini Embedding 2)
+    // 1. Generate Embeddings via Service Account OAuth2 (Gemini Embedding 2)
     try {
-      // Use AI Studio for embeddings as well, since Vertex is having 404 issues
-      const embeddingUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`;
-      
+      const { GoogleAuth } = require('google-auth-library');
+      const auth = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/generative-language', 'https://www.googleapis.com/auth/cloud-platform']
+      });
+      const client = await auth.getClient();
+      const tokenResponse = await client.getAccessToken();
+      const bearerToken = `Bearer ${tokenResponse.token}`;
+
+      const embeddingUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent`;
       const embeddingRes = await fetch(embeddingUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: { parts: [{ text: payload.raw_text }] }
-        })
+        headers: { 'Content-Type': 'application/json', 'Authorization': bearerToken },
+        body: JSON.stringify({ content: { parts: [{ text: payload.raw_text }] } })
       });
       const embeddingData = await embeddingRes.json();
       if (embeddingData.embedding?.values) {
         embeddingVector = embeddingData.embedding.values;
-        console.log("✅ Embeddings generated via Gemini Embedding 2");
+        console.log("✅ Embeddings generated via Service Account (Gemini Embedding 2)");
+      } else if (apiKey) {
+        // Fallback: API key for embeddings
+        const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`;
+        const fallbackRes = await fetch(fallbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: { parts: [{ text: payload.raw_text }] } })
+        });
+        const fallbackData = await fallbackRes.json();
+        if (fallbackData.embedding?.values) {
+          embeddingVector = fallbackData.embedding.values;
+          console.log("✅ Embeddings generated via API key fallback");
+        } else {
+          console.warn("Embedding fetch failed:", JSON.stringify(embeddingData));
+        }
       } else {
-        console.warn("Embedding fetch failed:", JSON.stringify(embeddingData));
+        console.warn("Embedding failed (no fallback available):", JSON.stringify(embeddingData));
       }
     } catch (e) {
       console.warn("Embedding fetch failed, using zero-vector", e);
     }
+
 
     // 2. Save Chunk to Firestore Immediately
     if (payload.source_type !== 'refresh_ai' as any) {
@@ -114,37 +134,28 @@ cloudEvent('processIngestion', async (cloudEvent: any) => {
     let stagnation_risk = "LOW";
     let admin_intervention_required = false;
     let action_items: any[] = [{ task: "Review latest transaction timeline", assignee_domain: payload.uploaded_by, status: 'pending' }];
-    // --- AI ORCHESTRATION PIPELINE ---
-    // Try every available model from the confirmed model list until one succeeds.
-    let aiSuccess = false;
-    const modelsToAttempt = [
-      'gemini-2.0-flash-lite',
-      'gemini-2.0-flash',
-      'gemini-2.5-flash',
-      'gemini-2.5-pro',
-      'gemini-flash-latest',
-    ];
 
-    for (const modelName of modelsToAttempt) {
-      if (aiSuccess) break;
+    // --- AI ORCHESTRATION PIPELINE ---
+    let aiSuccess = false;
+
+    const callGemini = async (authHeader: string, modelName: string): Promise<boolean> => {
       try {
-        console.log(`Attempting AI Studio with model: ${modelName}...`);
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-        const geminiRes = await fetch(geminiUrl, {
+        console.log(`Attempting Gemini (${modelName}) via Service Account OAuth2...`);
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+        const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': authHeader },
           body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
         });
-        const geminiData = await geminiRes.json();
+        const data = await res.json();
 
-        if (geminiData.error) {
-          console.warn(`Model ${modelName} error: [${geminiData.error.code}] ${geminiData.error.message?.substring(0, 120)}`);
-          continue;
+        if (data.error) {
+          console.warn(`[${modelName}] error [${data.error.code}]: ${data.error.message?.substring(0, 120)}`);
+          return false;
         }
 
-        if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
-          const text = geminiData.candidates[0].content.parts[0].text;
-          console.log(`DEBUG: AI Raw Text from ${modelName}:`, text.substring(0, 200));
+        if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+          const text = data.candidates[0].content.parts[0].text;
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             const aiExtracted = JSON.parse(jsonMatch[0]);
@@ -153,19 +164,78 @@ cloudEvent('processIngestion', async (cloudEvent: any) => {
             stagnation_risk = aiExtracted.stagnation_risk || stagnation_risk;
             admin_intervention_required = aiExtracted.admin_intervention_required ?? admin_intervention_required;
             action_items = aiExtracted.action_items || action_items;
-            aiSuccess = true;
-            console.log(`✅ AI Success via AI Studio (${modelName})!`);
+            console.log(`✅ AI Success via Service Account (${modelName})!`);
+            return true;
           } else {
-            console.warn(`Model ${modelName} returned text but no JSON match.`);
+            console.warn(`[${modelName}] returned text but no JSON block found.`);
           }
         }
       } catch (e: any) {
-        console.warn(`Model ${modelName} threw exception:`, e.message);
+        console.warn(`[${modelName}] exception:`, e.message);
+      }
+      return false;
+    };
+
+    // PRIMARY: Use Service Account (linkroom-key.json) to get OAuth2 Bearer token
+    try {
+      const { GoogleAuth } = require('google-auth-library');
+      const auth = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/generative-language', 'https://www.googleapis.com/auth/cloud-platform']
+      });
+      const client = await auth.getClient();
+      const tokenResponse = await client.getAccessToken();
+      const bearerToken = `Bearer ${tokenResponse.token}`;
+
+      // Try models in order of preference
+      const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+      for (const model of modelsToTry) {
+        if (aiSuccess) break;
+        aiSuccess = await callGemini(bearerToken, model);
+      }
+    } catch (authErr: any) {
+      console.warn('Service Account auth failed, will try API key fallback:', authErr.message);
+    }
+
+    // FALLBACK: API key (from .env.local) if SA auth fails
+    if (!aiSuccess && apiKey) {
+      const modelsToAttempt = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+      for (const modelName of modelsToAttempt) {
+        if (aiSuccess) break;
+        try {
+          console.log(`Fallback: Attempting ${modelName} via API key...`);
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+          const geminiRes = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          });
+          const geminiData = await geminiRes.json();
+          if (geminiData.error) {
+            console.warn(`API key fallback [${modelName}] error: [${geminiData.error.code}] ${geminiData.error.message?.substring(0, 80)}`);
+            continue;
+          }
+          if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
+            const text = geminiData.candidates[0].content.parts[0].text;
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const aiExtracted = JSON.parse(jsonMatch[0]);
+              summary_markdown = aiExtracted.summary_markdown || summary_markdown;
+              relationship_health_score = aiExtracted.relationship_health_score ?? relationship_health_score;
+              stagnation_risk = aiExtracted.stagnation_risk || stagnation_risk;
+              admin_intervention_required = aiExtracted.admin_intervention_required ?? admin_intervention_required;
+              action_items = aiExtracted.action_items || action_items;
+              aiSuccess = true;
+              console.log(`✅ AI Success via API key fallback (${modelName})!`);
+            }
+          }
+        } catch (e: any) {
+          console.warn(`API key fallback ${modelName} exception:`, e.message);
+        }
       }
     }
 
     if (!aiSuccess) {
-      console.error("❌ All AI models exhausted. Saving default placeholder.");
+      console.error("❌ All AI paths exhausted. Saving default placeholder.");
     }
 
     // 6. Save Complete Ecosystem Governance Metrics to Firestore
