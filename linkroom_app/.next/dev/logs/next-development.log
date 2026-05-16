@@ -1,7 +1,0 @@
-{"timestamp":"00:01:55.811","source":"Server","level":"ERROR","message":"Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
-{"timestamp":"00:01:55.812","source":"Server","level":"ERROR","message":"⨯ \"unhandledRejection:\" Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
-{"timestamp":"00:01:55.813","source":"Server","level":"ERROR","message":"⨯ \"unhandledRejection: \" Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
-{"timestamp":"00:04:18.259","source":"Server","level":"ERROR","message":"Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
-{"timestamp":"00:04:18.262","source":"Server","level":"ERROR","message":"Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
-{"timestamp":"00:04:30.138","source":"Server","level":"ERROR","message":"Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
-{"timestamp":"00:04:30.139","source":"Server","level":"ERROR","message":"Error: ENOENT: no such file or directory, scandir 'C:\\Users\\User\\Desktop\\Extra\\RoomLink\\linkroom_app\\src\\app'"}
